@@ -1,0 +1,16 @@
+[package]
+name = "tg-saver-bot"
+version = "0.1.0"
+authors = ["Evgenia Vaarties <97nomad@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+telegram-bot = "0.7"
+
+tokio = { version = "0.2", features = ["fs", "macros", "time"] }
+futures = "0.3"
+reqwest = "0.10"
+
+config = "0.10"
+serde_derive = "^1.0.8"
+serde = "^1.0.8"

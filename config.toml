@@ -1,0 +1,8 @@
+[telegram]
+token = ""
+allowed_usernames = [ "ninik2501" ]
+
+[download]
+target_dir = "/home/nommy/tg-download"
+sticker_tags = []
+image_tags = []
