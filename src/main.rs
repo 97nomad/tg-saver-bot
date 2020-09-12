@@ -1,4 +1,5 @@
 extern crate config;
+extern crate lru;
 extern crate serde;
 
 #[macro_use]
@@ -15,6 +16,8 @@ use parser::MessageTokens;
 use futures::StreamExt;
 use telegram_bot::*;
 
+use lru::LruCache;
+
 use std::cmp::Ordering;
 use std::iter::Iterator;
 
@@ -26,13 +29,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let token = &settings.telegram.token;
     let api = Api::new(&token);
 
+    let mut cache: LruCache<String, String> = LruCache::new(10);
+
     let mut stream = api.stream();
     while let Some(update) = stream.next().await {
         let update = update?;
 
         if let UpdateKind::Message(message) = update.kind {
             if is_user_allowed(&message, &settings) {
-                process_message(message, &api, &settings).await?;
+                process_message(message, &api, &settings, &mut cache).await?;
             } else {
                 let name = message.from.username.unwrap_or(message.from.first_name);
                 println!("<{}>: unallowed user trying to send something", name);
@@ -47,6 +52,7 @@ async fn process_message(
     message: Message,
     api: &Api,
     settings: &Settings,
+    cache: &mut LruCache<String, String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match message.kind {
         MessageKind::Text { ref data, .. } => process_text_message(&message, data, &api).await,
@@ -54,7 +60,18 @@ async fn process_message(
             ref data,
             ref caption,
             ref media_group_id,
-        } => process_photo_message(&message, &data, caption, media_group_id, &settings, &api).await,
+        } => {
+            process_photo_message(
+                &message,
+                &data,
+                caption,
+                media_group_id,
+                &settings,
+                &api,
+                cache,
+            )
+            .await
+        }
         MessageKind::Sticker { ref data, .. } => {
             process_sticker_message(&message, data, &settings, &api).await
         }
@@ -91,10 +108,21 @@ async fn process_photo_message(
     message: &Message,
     photos: &Vec<PhotoSize>,
     caption: &Option<String>,
-    _media_group_id: &Option<String>,
+    media_group_id: &Option<String>,
     settings: &Settings,
     api: &Api,
+    cache: &mut LruCache<String, String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let caption = match (media_group_id, caption) {
+        (Some(group_id), Some(caption)) => {
+            cache.put(group_id.to_owned(), caption.to_owned());
+            Some(caption)
+        }
+        (Some(group_id), None) => cache.get(group_id),
+        (None, Some(caption)) => Some(caption),
+        _ => None,
+    };
+
     if let Some(biggest_image) = find_biggest_image(photos) {
         let mut tokens: Vec<MessageTokens> = settings
             .download
@@ -106,8 +134,8 @@ async fn process_photo_message(
             .as_ref()
             .map(|text| parser::parse_message(&text.clone()))
             .unwrap_or(vec![]);
-	tokens.extend(parsed_tokens);
-	
+        tokens.extend(parsed_tokens);
+
         let path = download::download_file(biggest_image, api, settings, &tokens).await?;
 
         api.send(message.text_reply(format!("Файл сохранён в {}", path.display())))

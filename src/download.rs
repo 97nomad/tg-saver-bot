@@ -76,8 +76,9 @@ fn build_final_path(target_dir: &Path, tokens: &Vec<MessageTokens>, file_path: &
     // Check if file exists and add _x after filename
     if result_path.exists() {
         let mut tries: usize = 0;
+        let mut not_existent_path = result_path.clone();
 
-        while result_path.exists() {
+        while not_existent_path.exists() {
             tries += 1;
 
             let file_name = match result_path.extension() {
@@ -94,10 +95,10 @@ fn build_final_path(target_dir: &Path, tokens: &Vec<MessageTokens>, file_path: &
                 ),
             };
 
-            result_path = result_path.to_path_buf().with_file_name(file_name)
+            not_existent_path = result_path.to_path_buf().with_file_name(file_name)
         }
 
-        result_path.to_path_buf()
+        not_existent_path
     } else {
         result_path.to_path_buf()
     }
@@ -129,7 +130,7 @@ mod file_path_test {
 
     #[test]
     fn file_with_extension() {
-        let expected = test_files().join("file_with_extension_1.txt");
+        let expected = test_files().join("file_with_extension_2.txt");
         let result = build_final_path(&test_files(), &vec![], Path::new("file_with_extension.txt"));
         assert_eq!(result, expected)
     }
