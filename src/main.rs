@@ -1,3 +1,4 @@
+extern crate chrono;
 extern crate config;
 extern crate lru;
 extern crate serde;
@@ -17,6 +18,9 @@ use futures::StreamExt;
 use telegram_bot::*;
 
 use lru::LruCache;
+
+use chrono::prelude::Utc;
+use chrono::NaiveDateTime;
 
 use std::cmp::Ordering;
 use std::iter::Iterator;
@@ -103,7 +107,6 @@ async fn process_text_message(
     Ok(())
 }
 
-// TODO: Add LRU cache to save media_group_ids
 async fn process_photo_message(
     message: &Message,
     photos: &Vec<PhotoSize>,
@@ -113,6 +116,8 @@ async fn process_photo_message(
     api: &Api,
     cache: &mut LruCache<String, String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let time = extract_time(message);
+
     let caption = match (media_group_id, caption) {
         (Some(group_id), Some(caption)) => {
             cache.put(group_id.to_owned(), caption.to_owned());
@@ -136,7 +141,7 @@ async fn process_photo_message(
             .unwrap_or(vec![]);
         tokens.extend(parsed_tokens);
 
-        let path = download::download_file(biggest_image, api, settings, &tokens).await?;
+        let path = download::download_file(biggest_image, api, settings, &tokens, time).await?;
 
         api.send(message.text_reply(format!("Файл сохранён в {}", path.display())))
             .await?;
@@ -153,6 +158,8 @@ async fn process_sticker_message(
     settings: &Settings,
     api: &Api,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let time = extract_time(message);
+
     if let Some(image) = &sticker.thumb {
         let tokens = settings
             .download
@@ -160,7 +167,7 @@ async fn process_sticker_message(
             .iter()
             .map(|tag| MessageTokens::Hashtag(tag.to_owned()))
             .collect();
-        let path = download::download_file(image, api, settings, &tokens).await?;
+        let path = download::download_file(image, api, settings, &tokens, time).await?;
 
         api.send(message.text_reply(format!("Файл сохранён в {}", path.display())))
             .await?;
@@ -169,6 +176,13 @@ async fn process_sticker_message(
     }
 
     Ok(())
+}
+
+fn extract_time(message: &Message) -> NaiveDateTime {
+    message
+        .edit_date
+        .map(|unix_time| NaiveDateTime::from_timestamp(unix_time, 0))
+        .unwrap_or(Utc::now().naive_utc())
 }
 
 fn find_biggest_image(images: &Vec<PhotoSize>) -> Option<&PhotoSize> {

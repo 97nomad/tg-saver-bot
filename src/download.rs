@@ -1,3 +1,4 @@
+use ::chrono::NaiveDateTime;
 use ::telegram_bot::prelude::CanGetFile;
 use ::telegram_bot::types::ToFileRef;
 use ::telegram_bot::Api;
@@ -12,6 +13,7 @@ pub async fn download_file<F>(
     api: &Api,
     settings: &Settings,
     tokens: &Vec<MessageTokens>,
+    timestamp: NaiveDateTime,
 ) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>>
 where
     F: ToFileRef,
@@ -24,7 +26,7 @@ where
     let size = &file_info.file_size.unwrap();
 
     let default_filename = Path::new(&file_path);
-    let target_path = build_final_path(&target_dir, tokens, &default_filename);
+    let target_path = build_final_path(&target_dir, tokens, &default_filename, timestamp);
 
     println!(
         "Downloading file {} with size {}",
@@ -45,7 +47,12 @@ where
     Ok(target_path)
 }
 
-fn build_final_path(target_dir: &Path, tokens: &Vec<MessageTokens>, file_path: &Path) -> PathBuf {
+fn build_final_path(
+    target_dir: &Path,
+    tokens: &Vec<MessageTokens>,
+    file_path: &Path,
+    timestamp: NaiveDateTime,
+) -> PathBuf {
     let mut result_path = target_dir.to_path_buf();
 
     // Add hashtag tokens to path
@@ -57,7 +64,7 @@ fn build_final_path(target_dir: &Path, tokens: &Vec<MessageTokens>, file_path: &
     }
 
     // Generate filename from first text token and extract extension from file_path
-    // TODO: generate filename from timestamp if we don't have text token
+    let extension_str = file_path.extension().and_then(|ext| ext.to_str());
     let filename = tokens
         .iter()
         .find_map(|token| match token {
@@ -65,12 +72,16 @@ fn build_final_path(target_dir: &Path, tokens: &Vec<MessageTokens>, file_path: &
             _ => None,
         })
         .map(|text| {
-            file_path
-                .extension()
-                .map(|ext| format!("{}.{}", text, ext.to_str().unwrap()))
+            extension_str
+                .map(|ext| format!("{}.{}", text, ext))
                 .unwrap_or(text.to_string())
         })
-        .unwrap_or(file_path.file_name().unwrap().to_str().unwrap().to_string());
+        .unwrap_or({
+            let name = timestamp.format("file_%Y-%m-%d_%H-%M-%S").to_string();
+            extension_str
+                .map(|ext| format!("{}.{}", name, ext))
+                .unwrap_or(name.to_string())
+        });
     result_path.push(filename);
 
     // Check if file exists and add _x after filename
@@ -107,6 +118,7 @@ fn build_final_path(target_dir: &Path, tokens: &Vec<MessageTokens>, file_path: &
 #[cfg(test)]
 mod file_path_test {
     use super::*;
+    use ::chrono::prelude::Utc;
 
     fn test_files() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -117,21 +129,36 @@ mod file_path_test {
     #[test]
     fn non_existing_file() {
         let expected = test_files().join("non_existing_file");
-        let result = build_final_path(&test_files(), &vec![], Path::new("non_existing_file"));
+        let result = build_final_path(
+            &test_files(),
+            &vec![MessageTokens::Text("non_existing_file".to_owned())],
+            Path::new("non_existing_file"),
+            Utc::now().naive_utc(),
+        );
         assert_eq!(result, expected);
     }
 
     #[test]
     fn file_without_extension() {
         let expected = test_files().join("file_without_extension_1");
-        let result = build_final_path(&test_files(), &vec![], Path::new("file_without_extension"));
+        let result = build_final_path(
+            &test_files(),
+            &vec![MessageTokens::Text("file_without_extension".to_owned())],
+            Path::new("file_without_extension"),
+            Utc::now().naive_utc(),
+        );
         assert_eq!(result, expected)
     }
 
     #[test]
     fn file_with_extension() {
         let expected = test_files().join("file_with_extension_2.txt");
-        let result = build_final_path(&test_files(), &vec![], Path::new("file_with_extension.txt"));
+        let result = build_final_path(
+            &test_files(),
+            &vec![MessageTokens::Text("file_with_extension".to_owned())],
+            Path::new("file_with_extension.txt"),
+            Utc::now().naive_utc(),
+        );
         assert_eq!(result, expected)
     }
 
@@ -143,14 +170,16 @@ mod file_path_test {
             &vec![
                 MessageTokens::Hashtag("one".to_owned()),
                 MessageTokens::Hashtag("two".to_owned()),
+                MessageTokens::Text("file".to_owned()),
             ],
             Path::new("file"),
+            Utc::now().naive_utc(),
         );
         assert_eq!(result, expected)
     }
 
     #[test]
-    fn file_with_hashtag_and_filename() {
+    fn file_with_hashtag_and_extension() {
         let expected = test_files().join("folder").join("parsed_file.txt");
         let result = build_final_path(
             &test_files(),
@@ -159,20 +188,23 @@ mod file_path_test {
                 MessageTokens::Text("parsed_file".to_owned()),
             ],
             Path::new("file.txt"),
+            Utc::now().naive_utc(),
         );
         assert_eq!(result, expected)
     }
 
     #[test]
-    fn file_with_hashtag_and_filename_without_extension() {
-        let expected = test_files().join("folder").join("parsed_file");
+    fn file_withput_text_token() {
+        let time = Utc::now().naive_utc();
+        let expected = test_files().join("folder").join(format!(
+            "file_{}",
+            time.format("%Y-%m-%d_%H-%M-%S").to_string()
+        ));
         let result = build_final_path(
             &test_files(),
-            &vec![
-                MessageTokens::Hashtag("folder".to_owned()),
-                MessageTokens::Text("parsed_file".to_owned()),
-            ],
+            &vec![MessageTokens::Hashtag("folder".to_owned())],
             Path::new("file"),
+            time,
         );
         assert_eq!(result, expected)
     }
